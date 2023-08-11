@@ -1,0 +1,60 @@
+from flask import Flask, request, jsonify
+from flask_sqlalchemy import SQLAlchemy
+import os
+
+app = Flask(__name__)
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///videos.db'  # SQLite database file name
+db = SQLAlchemy(app)
+
+class Video(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    filename = db.Column(db.String(255), nullable=False, unique=True)
+
+class Subtitle(db.Model):
+    id = db.Column(db.Integer, primary_key=True)
+    video_id = db.Column(db.Integer, db.ForeignKey('video.id'), nullable=False)
+    timestamp = db.Column(db.Float, nullable=False)
+    text = db.Column(db.Text, nullable=False)
+
+db.create_all()
+
+@app.route('/upload', methods=['POST'])
+def upload_video():
+    if 'video' not in request.files:
+        return jsonify({'error': 'No video file provided'}), 400
+
+    video_file = request.files['video']
+    if video_file.filename == '':
+        return jsonify({'error': 'No video file selected'}), 400
+
+    video_filename = video_file.filename
+    video_file.save(os.path.join('videos', video_filename))
+
+    video = Video(filename=video_filename)
+    db.session.add(video)
+    db.session.commit()
+
+    subtitles = request.json.get('subtitles')
+    if subtitles:
+        for subtitle in subtitles:
+            timestamp = subtitle.get('timestamp')
+            text = subtitle.get('text')
+            if timestamp is not None and text:
+                subtitle_entry = Subtitle(video_id=video.id, timestamp=timestamp, text=text)
+                db.session.add(subtitle_entry)
+
+    db.session.commit()
+
+    return jsonify({'message': 'Video and subtitles uploaded successfully'}), 201
+
+@app.route('/get_subtitles/<int:video_id>', methods=['GET'])
+def get_subtitles(video_id):
+    video = Video.query.get_or_404(video_id)
+    subtitles = Subtitle.query.filter_by(video_id=video_id).all()
+
+    subtitles_data = [{'timestamp': subtitle.timestamp, 'text': subtitle.text} for subtitle in subtitles]
+
+    return jsonify({'video_filename': video.filename, 'subtitles': subtitles_data}), 200
+
+if __name__ == '__main__':
+    app.run(debug=True)
